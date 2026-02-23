@@ -59,7 +59,6 @@ jobs:
           az version
           az account show
           
-          export ARM_SUBSCRIPTION_ID=$(az account list --query "[?isDefault].id | [0]" -o tsv)
           export ANSIBLE_DEPRECATION_WARNINGS=False
           
           # Use GITHUB_HEAD_REF for pull requests and GITHUB_REF_NAME for branch pushes 
