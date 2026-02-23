@@ -10,7 +10,7 @@ on:
 
 jobs:
   Deploy_Infrastructure:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     
     env:
       BLOB_ACCESS_KEY: ${{ secrets.BLOB_ACCESS_KEY }}
