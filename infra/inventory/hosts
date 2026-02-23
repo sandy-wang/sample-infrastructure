@@ -1,0 +1,9 @@
+# Localhost host names must be unique
+[prod]
+localhost-prod
+
+[stage]
+localhost-stage
+
+[dev]
+localhost-dev

@@ -1,0 +1,72 @@
+# Global variables
+# IMPORTANT: Changes here will affect all environments.
+# Use YYMMDD for stack deployments only
+timestamp: "{{ lookup('pipe','date +%Y%m%d') }}"
+
+# default stack
+stack_name: infra
+
+# Defaults - override at command line if required
+prefix: sample
+location: ea
+azure_location: australiaeast
+user: "{{ lookup('env','HOME') }}"
+working_dir: "{{ user }}/temp/deployments-{{ timestamp }}/{{ prefix }}-{{ stack_name }}-{{ subscription_code }}-{{ azure_location }}"
+
+# Subscriptions
+subscription:
+  prod: # Production environment
+    code: prod
+    name: "Sample Production"
+    id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  stage: # Stage environment
+    code: stage
+    name: "Sample Stage"
+    id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  dev: # Dev environment
+    code: dev
+    name: "Sample DEV"
+    id: "d980aa37-90db-4557-af0b-6accfb71b19a"
+
+#----------------------#
+# Azure Primary Config #
+#----------------------#
+### Resource Groups
+rg:
+  shared: "{{ prefix }}-rg-shared-{{ azure_location }}" # Shared across all subscriptions
+  name:
+    common: "{{ prefix }}-rg-common-{{ subscription_code }}-{{ azure_location }}" # Common for all environments
+    network: "{{ prefix }}-rg-network-{{ subscription_code }}-{{ azure_location }}" # Networking segments
+    aks: "{{ prefix }}-rg-aks-{{ subscription_code }}-{{ azure_location }}" # AKS related
+    persist: "{{ prefix }}-rg-persist-{{ subscription_code }}-{{ azure_location }}" # Resources need to be retained
+  tags:
+    ServiceType: "Azure Resource Group"
+
+### Key Vault (3-24 characters)
+kv:
+  name:
+    aks: "{{ prefix }}-kv-aks-{{ subscription_code }}-{{ location }}" # certificates and secrets for AKS cluster and applications
+    platform: "{{ prefix }}-kv-infra-{{ subscription_code }}-{{ location }}" # certificates and secrets for other resources
+
+
+### Other common properties:
+devops_vmss_subnet_id: "/subscriptions/{{ subscription.dev.id }}/resourceGroups/AUSAZ-RG-DEV-DEVOPS-VMSS/providers/Microsoft.Network/virtualNetworks/AUSAZ-RG-DEV-DEVOPS-VMSS-vnet/subnets/default"
+
+### Terraform backend configuration
+backend:
+  account_name: "{{prefix}}blobtfstateausea"
+  container: tfstate
+  key: "{{ prefix }}-{{ stack_name }}-{{ subscription_code }}-{{ azure_location }}.tfstate"
+
+# Terraform
+tf_ignore_changes_list:
+
+#-------------#
+# Common Tags #
+#-------------#
+tags:
+  application: "Sample"
+  costCentre: "INNOVATION"
+  location: "{{ azure_location }}"
+  environment: "{{ subscription_code|upper }}"
+

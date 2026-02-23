@@ -1,0 +1,57 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+
+jobs:
+  Deploy_Infrastructure:
+    runs-on: self-hosted
+    
+    env:
+      BLOB_ACCESS_KEY: ${{ secrets.BLOB_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Terraform v1.4.4
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.4.4"
+
+      - name: Install Ansible
+        run: |
+          sudo python3 -m pip install --upgrade ansible
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create or Update Resource Group and Core Network
+        working-directory: infra/
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+        run: |
+          az version
+          az account show
+          
+          export ARM_SUBSCRIPTION_ID=$(az account list --query "[?isDefault].id | [0]" -o tsv)
+          export ARM_ACCESS_KEY="${BLOB_ACCESS_KEY}"
+          export ANSIBLE_DEPRECATION_WARNINGS=False
+          
+          # Use GITHUB_HEAD_REF for pull requests and GITHUB_REF_NAME for branch pushes 
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          
+          ansible-playbook -v playbook.yml --extra-vars app_env=dev --tags preview
+          
+          if [ "$BRANCH_NAME" == "dev" ]; then
+              ansible-playbook -v playbook.yml --extra-vars app_env=dev --tags deploy
+          fi

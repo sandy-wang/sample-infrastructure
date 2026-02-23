@@ -1,0 +1,125 @@
+---
+- name: Playbook for provisioning Azure Storage Account and resources inside it
+  hosts: "{{ app_env }}"
+  connection: local
+  gather_facts: no
+
+  tasks:
+    #---------#
+    # Prepare #
+    #---------#
+    - name: Create working dir and subdirs in User's /temp folder
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - "{{ working_dir }}"
+        - "{{ working_dir }}/tf"
+        - "{{ working_dir }}/tf/.terraform"
+      register: create_working_dirs
+      tags:
+        - always
+
+    #-----------------------#
+    # Generate TF Templates #
+    #-----------------------#
+    - name: Delete existing all templates and configuration in working folder
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_fileglob:
+        - "{{ working_dir }}/tf/.terraform/*"
+        - "{{ working_dir }}/tf/*.tf"
+      register: delete_tf_templates
+      tags:
+        - template
+        - deploy
+        - preview
+
+    - name: Copy all Terraform templates to TF working folder
+      template:
+        src: "{{ item }}"
+        dest: '{{ working_dir }}/tf/{{ item | basename | regex_replace("\.j2","") }}'
+      # fileglob lookup : Patterns/wildcard are only supported on files, not directory/paths.
+      with_fileglob:
+        - tf_templates/*.tf.j2
+        - tf_templates/az_rg/*.tf.j2
+        - tf_templates/az_network/*.tf.j2
+      register: copy_tf_templates
+      when: stack_name == "infra"
+      tags:
+        - template
+        - deploy
+        - preview
+
+    - name: Copy all Terraform templates to TF working folder
+      template:
+        src: "{{ item }}"
+        dest: '{{ working_dir }}/tf/{{ item | basename | regex_replace("\.j2","") }}'
+      # fileglob lookup : Patterns/wildcard are only supported on files, not directory/paths.
+      with_fileglob:
+        - tf_templates/*.tf.j2
+        - "tf_templates/{{ stack_name }}/*.tf.j2"
+      register: copy_tf_templates
+      when: stack_name != "infra"
+      tags:
+        - template
+        - deploy
+        - preview
+
+    #---------------------------#
+    # Provision Terraform Stack #
+    #---------------------------#
+    - name: Init Terraform and Create Plan
+      terraform:
+        project_path: "{{ working_dir }}/tf/"
+        state: planned
+        plan_file: out.plan
+        force_init: true
+        #workspace: development #for demoing workspace
+      register: tf_plan_results
+      tags:
+        - deploy
+        - preview
+
+    - name: Listing resources terraform state file before applying changes
+      shell: terraform state list
+      args:
+        chdir: "{{ working_dir }}/tf/"
+      register: tf_state_list_before
+      tags:
+        - deploy
+        - preview
+
+    - name: Apply Terraform Plan (Provision Stack)
+      terraform:
+        project_path: "{{ working_dir }}/tf/"
+        state: present
+        plan_file: out.plan
+        #workspace: development #for demoing workspace
+      register: tf_apply_results
+      when: stack_name == "infra"
+      tags:
+        - deploy
+
+    - name: Listing resources terraform state file after applying changes
+      shell: terraform state list
+      args:
+        chdir: "{{ working_dir }}/tf/"
+      register: tf_state_list_after
+      when: stack_name == "infra"
+      tags:
+        - deploy
+
+    #---------------#
+    # Destroy Stack #
+    #---------------#
+    - name: Destroy Terraform Stack (force_delete must be true)
+      terraform:
+        project_path: "{{ working_dir }}/tf/"
+        state: absent
+        plan_file: out.plan
+      when: force_delete
+      register: tf_destroy_results
+      tags:
+        - destroy

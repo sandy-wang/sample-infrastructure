@@ -1,0 +1,48 @@
+# Variables for Dev Subscription
+subscription_code: "{{ subscription.dev.code }}"
+subscription_id: "{{ subscription.dev.id }}"
+
+
+#-----------------------#
+# Azure Virtual Network #
+#-----------------------#
+vnet:
+  name: "{{ prefix }}-vnet-01-{{ subscription_code }}"
+  addresses:
+    - 10.0.160.0/20
+  tags:
+    ServiceType: "Azure Virtual Network"
+    SecurityClassification: High
+
+subnets:
+  - agw:
+    name: "{{ prefix }}-snet-agw-{{ subscription_code }}"
+    address: 10.0.160.0/24
+    service_endpoints:
+      - "Microsoft.KeyVault"
+  - lb:
+    name: "{{ prefix }}-snet-lbi-{{ subscription_code }}"
+    address: 10.0.161.0/24
+    service_endpoints:
+      - "Microsoft.KeyVault"
+  - db:
+    name: "{{ prefix }}-snet-db-{{ subscription_code }}"
+    address: 10.0.162.0/24
+    enforce_private_link_endpoint_network_policies: "true"
+    service_endpoints:
+      - "Microsoft.KeyVault"
+  - pe:
+    name: "{{ prefix }}-snet-pe-{{ subscription_code }}"
+    address: 10.0.163.0/24
+    enforce_private_link_endpoint_network_policies: "true"
+    service_endpoints:
+      - "Microsoft.KeyVault"
+      - "Microsoft.Storage"
+  - aks:
+    name: "{{ prefix }}-snet-aks-{{ subscription_code }}"
+    address: 10.0.168.0/21
+    enforce_private_link_endpoint_network_policies: "true"
+    service_endpoints:
+      - "Microsoft.KeyVault"
+      - "Microsoft.Storage"
+

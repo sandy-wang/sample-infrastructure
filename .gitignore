@@ -1,0 +1,16 @@
+# Dirs
+**/log/*
+**/.terraform/*
+**/k8s_config/*
+**/deploy/*
+**/tf/*
+
+# Files
+kube_config
+*.log
+*.log*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tf
+.DS_Store

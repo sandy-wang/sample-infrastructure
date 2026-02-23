@@ -1,0 +1,3 @@
+# Variables for Prod Subscription
+subscription_code: "{{ subscription.prod.code }}"
+subscription_id: "{{ subscription.prod.id }}"

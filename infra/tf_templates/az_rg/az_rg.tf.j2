@@ -1,0 +1,17 @@
+{% for key, value in rg.name.items() %}
+resource "azurerm_resource_group" "{{ value }}" {
+  name     = "{{ value }}"
+  location = "{{ azure_location }}"
+  # Tagging
+{% if tags is defined %}
+  tags = {
+{%  for key, value in tags.items() %}
+    "{{ key }}" = "{{ value }}"
+{% endfor %}
+{%  for key, value in rg.tags.items() %}
+    "{{ key }}" = "{{ value }}"
+{% endfor %}
+  }
+{% endif %}
+}
+{% endfor %}

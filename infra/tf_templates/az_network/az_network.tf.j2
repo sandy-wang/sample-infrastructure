@@ -1,0 +1,75 @@
+resource "azurerm_virtual_network" "{{ vnet.name }}" {
+  name                = "{{ vnet.name }}"
+  address_space       = [
+{% for address in vnet.addresses %}
+{%   if loop.last %}
+       "{{ address }}"
+{%   else %}
+       "{{ address }}",
+{%   endif %}
+{% endfor %}
+    ]
+  location            = "{{ azure_location }}"
+  resource_group_name = data.azurerm_resource_group.{{ rg.name.network }}.name
+
+  # Tagging
+{% if tags is defined %}
+  tags = {
+{%  for key, value in tags.items() %}
+    {{ key }} = "{{ value }}"
+{% endfor %}
+{%  for key, value in vnet.tags.items() %}
+    {{ key }} = "{{ value }}"
+{% endfor %}
+  }
+{% endif %}
+}
+
+
+{% for subnet in subnets %}
+resource "azurerm_subnet" "{{ subnet.name }}" {
+  name                 = "{{ subnet.name }}"
+  resource_group_name  = data.azurerm_resource_group.{{ rg.name.network }}.name
+  virtual_network_name = azurerm_virtual_network.{{ vnet.name }}.name
+  address_prefixes     = ["{{ subnet.address }}"]
+
+{% if subnet.enforce_private_link_endpoint_network_policies is defined %}
+  enforce_private_link_endpoint_network_policies = "{{ subnet.enforce_private_link_endpoint_network_policies }}"
+{% endif %}
+
+{% if subnet.enforce_private_link_service_network_policies is defined %}
+  enforce_private_link_service_network_policies = "{{ subnet.enforce_private_link_service_network_policies }}"
+{% endif %}
+
+{% if subnet.service_endpoints is defined %}
+  service_endpoints    = [
+{% for service in subnet.service_endpoints %}
+{%   if loop.last %}
+       "{{ service }}"
+{%   else %}
+       "{{ service }}",
+{%   endif %}
+{% endfor %}
+    ]
+{% endif %}
+
+{% if subnet.delegation_name is defined %}
+  delegation {
+    name = "{{ subnet.delegation_name }}"
+
+    service_delegation {
+      name    = "{{ subnet.service_name }}"
+      actions = [
+{% for action in subnet.service_actions %}
+{%   if loop.last %}
+       "{{ action }}"
+{%   else %}
+       "{{ action }}",
+{%   endif %}
+{% endfor %}
+      ]
+    }
+  }
+{% endif %}
+}
+{% endfor %}

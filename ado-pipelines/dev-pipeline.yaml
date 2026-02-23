@@ -1,0 +1,53 @@
+trigger:
+  - dev
+
+pool:
+  name: sample-vmss-hosted-agents
+
+variables:
+- name: blobAccessKey
+  value: $(BLOB_ACCESS_KEY)
+- name: branchName
+  value: $(Build.SourceBranchName)
+
+jobs:
+- job: Deploy_Infrastructure
+  workspace:
+    clean: all
+  steps:
+    - checkout: self
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+      displayName: 'Install Terraform v1.4.4'
+      inputs:
+        terraformVersion: 1.4.4
+    - task: Bash@3
+      displayName: 'Install Ansible'
+      inputs:
+        targetType: 'inline'
+        script: |
+          sudo python3 -m pip install --upgrade ansible
+
+    - task: AzureCLI@2
+      displayName: Create or Update Resource Group and Core Network
+      inputs:
+        azureSubscription: 'sample-dev-serviceconnection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az version
+          az account show
+          export ARM_CLIENT_ID=$servicePrincipalId
+          export ARM_CLIENT_SECRET=$servicePrincipalKey
+          export ARM_SUBSCRIPTION_ID=$(az account list --query "[?isDefault].id | [0]" -o tsv)
+          export ARM_TENANT_ID=$tenantId
+          export ARM_ACCESS_KEY=$(blobAccessKey)
+          export ANSIBLE_DEPRECATION_WARNINGS=False
+          ansible-playbook -v playbook.yml --extra-vars app_env=dev --tags preview
+          if [ "$(branchName)" == "dev" ]; then
+              ansible-playbook -v playbook.yml --extra-vars app_env=dev --tags deploy
+          fi
+        workingDirectory: 'infra/'
+        addSpnToEnvironment: true
+        useGlobalConfig: true
+        failOnStandardError: true
+

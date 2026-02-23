@@ -1,0 +1,7 @@
+terraform {
+  backend "azurerm" {
+    storage_account_name = "{{ backend.account_name }}"
+    container_name       = "{{ backend.container }}"
+    key                  = "{{ backend.key }}"
+  }
+}
