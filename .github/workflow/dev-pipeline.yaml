@@ -11,6 +11,7 @@ on:
 jobs:
   Deploy_Infrastructure:
     runs-on: ubuntu-latest
+    environment: SAMPLE-DEV-AUE
     
     env:
       BLOB_ACCESS_KEY: ${{ secrets.BLOB_ACCESS_KEY }}
