@@ -1,12 +1,18 @@
 name: Deploy Infrastructure
 
 on:
+  workflow_dispatch:
+    inputs:
+      env_filter:
+        description: 'The filter to apply to the environment variables, i.e. "SAMPLE-DEV-*", "*-DEV", etc.'
+        required: false
+        default: ''
   push:
     branches:
-      - dev
+      - main
   pull_request:
     branches:
-      - dev
+      - main
 
 jobs:
   Deploy_Infrastructure:
