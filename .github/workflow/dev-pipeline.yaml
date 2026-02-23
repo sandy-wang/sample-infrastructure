@@ -12,9 +12,6 @@ jobs:
   Deploy_Infrastructure:
     runs-on: ubuntu-latest
     environment: SAMPLE-DEV-AUE
-    
-    env:
-      BLOB_ACCESS_KEY: ${{ secrets.BLOB_ACCESS_KEY }}
 
     steps:
       - name: Checkout repository
@@ -31,21 +28,26 @@ jobs:
 
       - name: Azure Login
         uses: azure/login@v2
+        env:
+          ARM_CLIENT_ID: "${{ env.ARM_CLIENT_ID  }}"
+          ARM_SUBSCRIPTION_ID: "${{ env.ARM_SUBSCRIPTION_ID }}"
+          ARM_TENANT_ID: "${{ env.ARM_TENANT_ID }}"
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: "${{ env.ARM_CLIENT_ID  }}"
+          subscription-id: "${{ env.ARM_SUBSCRIPTION_ID }}"
+          tenant-id: "${{ env.ARM_TENANT_ID }}"
 
       - name: Create or Update Resource Group and Core Network
         working-directory: infra/
         env:
-          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          ARM_CLIENT_ID: ${{ env.ARM_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ env.ARM_TENANT_ID }}
         run: |
           az version
           az account show
           
           export ARM_SUBSCRIPTION_ID=$(az account list --query "[?isDefault].id | [0]" -o tsv)
-          export ARM_ACCESS_KEY="${BLOB_ACCESS_KEY}"
           export ANSIBLE_DEPRECATION_WARNINGS=False
           
           # Use GITHUB_HEAD_REF for pull requests and GITHUB_REF_NAME for branch pushes 
