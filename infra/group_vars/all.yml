@@ -8,7 +8,7 @@ stack_name: infra
 
 # Defaults - override at command line if required
 prefix: sample
-location: ea
+location: aue
 azure_location: australiaeast
 user: "{{ lookup('env','HOME') }}"
 working_dir: "{{ user }}/temp/deployments-{{ timestamp }}/{{ prefix }}-{{ stack_name }}-{{ subscription_code }}-{{ azure_location }}"
