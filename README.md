@@ -1,6 +1,6 @@
 # Sample Cloud Platform Repository
 
-This repository contains infrastructure-as-code (IaC) and configuration-as-code (CasC) source code for the Sample Azure Cloud Platform stacks and individual resources.
+This repository contains infrastructure-as-code (IaC) and configuration-as-code (CasC) source code for the Sample Azure Cloud Platform stacks and individual resources, currently on Azure, provisioned by Terraform and automated by Ansible.
 
 ## !!Important!!
 Terraform state file is stored in Azure Blob storage account,
@@ -9,13 +9,7 @@ Target subscription/Environment is automatically determined by the branch the co
 
 ## Source Code
 
-This repository houses code for the following resource groups:
-
-- `config` - Configuration playbooks primarily for AKS native resources
-- `docker` - Dockerfile for private Docker images
-- `resources` - Playbooks for provisioning and configuring single resources
-- `scripts` - Scripts for simplifying administration and repetitive tasks
-- `infra` - Complete infrastructure stacks, currently on Azure, provisioned by Ansible and Terraform
+This repository houses code inside `infra` folder.
 
 ## Toolchain
 
@@ -23,7 +17,7 @@ The following tools are required to develop and debug the code locally:
 - Azure CLI 2.37.0 +
 - Python 3.8+
 - Ansible 2.8+ or Ansible core 2.13+
-- Terraform 1.2.6 +
+- Terraform 1.4.4 +
 - Kubectl Client 1.21.0 + (For AKS resources only)
 
 ## Deployments
