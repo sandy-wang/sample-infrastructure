@@ -54,7 +54,7 @@ devops_vmss_subnet_id: "/subscriptions/{{ subscription.dev.id }}/resourceGroups/
 
 ### Terraform backend configuration
 backend:
-  account_name: "{{prefix}}blobtfstateausea"
+  account_name: "{{prefix}}blobtfstateaue"
   container: tfstate
   key: "{{ prefix }}-{{ stack_name }}-{{ subscription_code }}-{{ azure_location }}.tfstate"
 
