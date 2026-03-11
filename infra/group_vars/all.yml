@@ -26,7 +26,7 @@ subscription:
   dev: # Dev environment
     code: dev
     name: "Sample DEV"
-    id: "d980aa37-90db-4557-af0b-6accfb71b19a"
+    id: "1b343b48-fdb4-4f47-8cb2-3df7b23278a9"
 
 #----------------------#
 # Azure Primary Config #
