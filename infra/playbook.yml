@@ -16,7 +16,21 @@
         - "{{ working_dir }}"
         - "{{ working_dir }}/tf"
         - "{{ working_dir }}/tf/.terraform"
+        - "{{ working_dir }}/k8s"
       register: create_working_dirs
+      tags:
+        - always
+
+    - name: By default, directly refer resources
+      set_fact:
+        data_reference: ""
+      tags:
+        - always
+
+    - name: Enable Data Source if stack_name is provided (not default)
+      set_fact:
+        data_reference: "data."
+      when: stack_name != "infra"
       tags:
         - always
 
@@ -30,6 +44,8 @@
       with_fileglob:
         - "{{ working_dir }}/tf/.terraform/*"
         - "{{ working_dir }}/tf/*.tf"
+        - "{{ working_dir }}/k8s/*"
+        - "{{ working_dir }}/*"
       register: delete_tf_templates
       tags:
         - template
@@ -43,10 +59,47 @@
       # fileglob lookup : Patterns/wildcard are only supported on files, not directory/paths.
       with_fileglob:
         - tf_templates/*.tf.j2
-        - tf_templates/az_rg/*.tf.j2
+        - tf_templates/az_resource_provider/*.tf.j2
+        - tf_templates/az_resource_group/*.tf.j2
         - tf_templates/az_network/*.tf.j2
+        - tf_templates/az_container_registry/*.tf.j2
+        - tf_templates/az_aks_cluster/*.tf.j2
+        - tf_templates/az_monitor/*.tf.j2
+        - tf_templates/az_keyvault/*.tf.j2
+        - tf_templates/az_storage_account/*.tf.j2
+        - tf_templates/az_postgresql_server/*.tf.j2
+        - tf_templates/az_servicebus/*.tf.j2
+        - tf_templates/az_dns_zone/*.tf.j2
+        - tf_templates/az_web_app/*.tf.j2
+        - tf_templates/az_recovery_services/*.tf.j2
+        - tf_templates/az_security_center/*.tf.j2
+        - tf_templates/az_firewall/*.tf.j2
+        - tf_templates/az_backup_vault/*.tf.j2
+        - tf_templates/az_cdn_frontdoor/*.tf.j2
       register: copy_tf_templates
-      when: stack_name == "infra"
+      when: stack_name == "infra" and "-dr" not in subscription_code
+      tags:
+        - template
+        - deploy
+        - preview
+
+    - name: Copy all Terraform templates to TF working folder
+      template:
+        src: "{{ item }}"
+        dest: '{{ working_dir }}/tf/{{ item | basename | regex_replace("\.j2","") }}'
+      # fileglob lookup : Patterns/wildcard are only supported on files, not directory/paths.
+      with_fileglob:
+        - tf_templates/*.tf.j2
+        - tf_templates/az_resource_group/*.tf.j2
+        - tf_templates/az_network/*.tf.j2
+        - tf_templates/az_aks_cluster/*.tf.j2
+        - tf_templates/az_keyvault/*.tf.j2
+        - tf_templates/az_servicebus/*.tf.j2
+        - tf_templates/az_dns_zone/*.tf.j2
+        - tf_templates/az_web_app/*.tf.j2
+        - tf_templates/az_firewall/*.tf.j2
+      register: copy_tf_templates
+      when: stack_name == "infra" and "-dr" in subscription_code
       tags:
         - template
         - deploy
@@ -71,16 +124,40 @@
     # Provision Terraform Stack #
     #---------------------------#
     - name: Init Terraform and Create Plan
-      terraform:
-        project_path: "{{ working_dir }}/tf/"
-        state: planned
-        plan_file: out.plan
-        force_init: true
-        #workspace: development #for demoing workspace
+      shell: >
+        terraform init;
+        terraform plan -lock=true -input=false -no-color -out out.plan
+      args:
+        chdir: "{{ working_dir }}/tf/"
       register: tf_plan_results
       tags:
         - deploy
         - preview
+
+### check output for any change that contains destroy, if yes, return with 1 unless force it###
+    - name: By default, directly refer resources
+      set_fact:
+        resources_to_destroy: ""
+      no_log: true
+      tags:
+        - preview
+        - deploy
+
+    - name: Check if there is any resource that is going to be destroyed
+      set_fact:
+        resources_to_destroy: "{{ tf_plan_results.stdout | regex_search(re,'\\1') | last }}"
+      vars:
+        re: '(\d+) to destroy'
+      ignore_errors: true
+      tags:
+        - preview
+        - deploy
+
+    - name: Stop the execution when detecting there is resource to destroy
+      shell: exit 1
+      when: resources_to_destroy != "0" and resources_to_destroy != "" and force_destroy == "false"
+      tags:
+        - deploy
 
     - name: Listing resources terraform state file before applying changes
       shell: terraform state list
@@ -92,11 +169,10 @@
         - preview
 
     - name: Apply Terraform Plan (Provision Stack)
-      terraform:
-        project_path: "{{ working_dir }}/tf/"
-        state: present
-        plan_file: out.plan
-        #workspace: development #for demoing workspace
+      shell: >
+        terraform apply -no-color -input=false -auto-approve -lock=true out.plan
+      args:
+        chdir: "{{ working_dir }}/tf/"
       register: tf_apply_results
       when: stack_name == "infra"
       tags:
@@ -111,15 +187,534 @@
       tags:
         - deploy
 
+    - name: Get all the terraform output items after applying changes
+      shell: terraform output --json | jq 'with_entries(.value |= .value)'
+      args:
+        chdir: "{{ working_dir }}/tf/"
+      register: tf_output_items
+      no_log: true
+      when: stack_name == "infra"
+      tags:
+        - preview
+        - deploy
+
+    - name: Print register stdout_lines
+      debug:
+        var: tf_output_items.stdout_lines
+      tags:
+        - preview
+        - deploy
+
+    #------------------#
+    # PSQL Geo-Restore #
+    #------------------#
+    - name: Before Geo-Restore, check if the Source PSQL flexible server exist
+      shell: >
+        az postgres flexible-server show
+        --id {{ psql.source_server_id }}
+      when: psql.psql_geo_restore == "yes"
+      register: source_psql_server
+      tags:
+        - preview
+        - deploy
+        - restore_db
+
+    - name: Before Geo-Restore, check if the Target PSQL flexible server exist
+      shell: >
+        az postgres flexible-server show
+        --name {{ psql.target_server_name }}
+        --resource-group {{ psql.target_server_rg }}
+      when: psql.psql_geo_restore == "yes"
+      ignore_errors: true
+      register: target_psql_server
+      tags:
+        - preview
+        - deploy
+        - restore_db
+
+    - name: Geo-Restore target PSQL server from source server
+      shell: >
+        az postgres flexible-server geo-restore
+        --name {{ psql.target_server_name }}
+        --resource-group {{ psql.source_server_rg }}
+        --location {{ psql.location }}
+        --source-server {{ psql.source_server_id }}
+        --subnet {{ psql.target_server_subnet }}
+        --geo-redundant-backup enabled
+        --private-dns-zone privatelink.postgres.database.azure.com ;
+        az resource move
+        --destination-group {{ psql.target_server_rg }}
+        --ids {{ psql.target_server_id_before_move }}
+      when: deploy_on_demand == "yes" and psql.psql_geo_restore == "yes"
+      register: geo_restore_psql_server
+      tags:
+        - deploy
+        - restore_db
+
+    - name: Before Geo-Restore, check if the Source Analytics PSQL flexible server exist
+      shell: >
+        az postgres flexible-server show
+        --id {{ psql.analytics_source_server_id }}
+      when: psql.psql_geo_restore == "yes"
+      register: source_psql_server
+      tags:
+        - preview
+        - deploy
+        - restore_db
+
+    - name: Before Geo-Restore, check if the Target Analytics PSQL flexible server exist
+      shell: >
+        az postgres flexible-server show
+        --name {{ psql.analytics_target_server_name }}
+        --resource-group {{ psql.analytics_target_server_rg }}
+      when: psql.psql_geo_restore == "yes"
+      ignore_errors: true
+      register: target_psql_server
+      tags:
+        - preview
+        - deploy
+        - restore_db
+
+    - name: Geo-Restore target Analytics PSQL server from source server
+      shell: >
+        az postgres flexible-server geo-restore
+        --name {{ psql.analytics_target_server_name }}
+        --resource-group {{ psql.analytics_source_server_rg }}
+        --location {{ psql.location }}
+        --source-server {{ psql.analytics_source_server_id }}
+        --subnet {{ psql.analytics_target_server_subnet }}
+        --geo-redundant-backup enabled
+        --private-dns-zone privatelink.postgres.database.azure.com ;
+        az resource move
+        --destination-group {{ psql.analytics_target_server_rg }}
+        --ids {{ psql.analytics_target_server_id_before_move }}
+      when: deploy_on_demand == "yes" and psql.psql_geo_restore == "yes"
+      register: geo_restore_analytics_psql_server
+      tags:
+        - deploy
+        - restore_db
+
+    #------------------#
+    # Disk Geo-Restore #
+    #------------------#
+    - name: Get Tableau disk snapshot ID
+      shell: >
+        az snapshot list --resource-group {{ rg.name.persist }} --query "[0].id"
+      when: deploy_on_demand == "yes" and disk_geo_restore == "yes"
+      register: tableau_snapshot_id
+      tags:
+        - preview
+        - deploy
+        - restore_disk
+
+    - name: Restore Tableau Data Disk from snapshot
+      shell: >
+        az disk create --resource-group {{ rg.name.persist }} --source {{ tableau_snapshot_id.stdout }} --name {{ tableau.pv_name }}
+      when: deploy_on_demand == "yes" and disk_geo_restore == "yes"
+      tags:
+        - deploy
+        - restore_disk
+
     #---------------#
     # Destroy Stack #
     #---------------#
     - name: Destroy Terraform Stack (force_delete must be true)
-      terraform:
-        project_path: "{{ working_dir }}/tf/"
-        state: absent
-        plan_file: out.plan
+      shell: >
+        terraform apply -destroy out.plan
+      args:
+        chdir: "{{ working_dir }}/tf/"
       when: force_delete
       register: tf_destroy_results
       tags:
         - destroy
+
+### Note, Configuration As Code should be able to run as independent steps
+### There should be no reference to any resource attribute from Terraform state
+### Instead using Azure CLI for resource attribute
+    #-----------------------#
+    # Configure K8s Cluster #
+    #-----------------------#
+    - name: Get AKS (kubeconfig) credentials
+      shell: >
+        az aks get-credentials
+        --name {{ aks.name }}
+        --resource-group {{ rg.name.aks }}
+        --subscription {{ subscription_id }}
+        --overwrite-existing
+        --format azure;
+        kubelogin convert-kubeconfig -l azurecli
+      no_log: true
+      register: k8s_context
+      tags:
+        - configure
+        - appgw
+        - csi
+        - keda
+
+    - name: Apply Cluster Role Binding for Service Principal in AKS
+      shell: >
+        kubectl apply -f "k8s_templates/k8s_rbac_cluster_admin/clusterrolebinding-spn-{{ subscription_code }}.yaml"
+      tags:
+        - configure
+
+    - name: Create Namespaces
+      shell: >
+        kubectl create namespace {{ item }} --dry-run=client -o yaml | kubectl apply -f -;
+      with_items: "{{ namespaces }}"
+      register: kubectl_namespaces
+      tags:
+        - configure
+
+    # --> Helm Repos
+    - name: Add all Helm Repos
+      shell: helm repo add {{ item }}
+      with_items:
+        - 'application-gateway-kubernetes-ingress https://appgwingress.blob.core.windows.net/ingress-azure-helm-package/'
+        - 'csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts'
+        - 'kedacore https://kedacore.github.io/charts'
+      register: install_helm_repos
+      tags:
+        - template
+        - configure
+        - appgw
+        - csi
+        - keda
+
+    - name: Update Helm repos
+      shell: helm repo update
+      register: update_helm_repos
+      tags:
+        - template
+        - configure
+        - appgw
+        - csi
+        - keda
+
+    # --> Pre-requisites for Azure Workload Identity
+    # Reference: https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster
+    - name: Retrieve the OIDC Issuer URL for AKS cluster
+      shell: >
+        az aks show
+        --name {{ aks.name }}
+        --resource-group {{ rg.name.aks }}
+        --subscription {{ subscription_id }}
+        --query [oidcIssuerProfile.issuerUrl] -o tsv
+      no_log: true
+      register: get_oidc_url_aks
+      tags:
+        - configure
+        - template
+        - workloadidentity
+        - appgw
+        - testing
+
+    - name: Retrieve Managed Identity info for AKS cluster
+      shell: >
+        az identity show
+        --name {{ aks_mi.name }}
+        --resource-group {{ aks_mi.rg }}
+        --subscription {{ subscription_id }}
+        --query [id,clientId] -o tsv
+      no_log: true
+      register: get_identity_aks
+      tags:
+        - configure
+        - template
+        - workloadidentity
+        - appgw
+        - testing
+
+    - name: Set facts for OIDC Issuer URL
+      set_fact:
+        oidc_issuer_url: "{{ get_oidc_url_aks.stdout }}"
+        aks_mi_client_id: "{{ get_identity_aks.stdout_lines[1] }}"
+      no_log: true
+      tags:
+        - configure
+        - template
+        - workloadidentity
+        - appgw
+        - testing
+
+    - name: Create Service Account definition from template
+      template:
+        src: "k8s_templates/azure-workload-identity/serviceaccount.yaml.j2"
+        dest: "{{ working_dir }}/k8s/serviceaccount.yaml"
+      register: azure_serviceaccount_template
+      tags:
+        - configure
+        - template
+        - workloadidentity
+
+    - name: Create Service Account per Namespace
+      shell: >
+        cat "{{ working_dir }}/k8s/serviceaccount.yaml" | kubectl apply -n {{ item }} -f -;
+      with_items: "{{ namespaces }}"
+      register: kubectl_serviceaccounts
+      tags:
+        - configure
+        - workloadidentity
+
+    - name: Create Federated Credentials for each Service Account
+      shell: >
+        az identity federated-credential create
+        --name federated-credential-{{ aks_mi.name }}-{{ item }}-namespace
+        --identity-name {{ aks_mi.name }}
+        --resource-group {{ aks_mi.rg }}
+        --issuer {{ oidc_issuer_url }}
+        --subject system:serviceaccount:{{ item }}:aks-managed-identity-sa
+        --audience api://AzureADTokenExchange
+      with_items: "{{ namespaces }}"
+      register: azure_mi_aks_federated_credentials
+      when: stack_name == "infra" and "-dr" not in subscription_code
+      tags:
+        - configure
+        - workloadidentity
+
+    - name: Create Federated Credentials for each Service Account
+      shell: >
+        az identity federated-credential create
+        --name federated-credential-{{ aks_mi.name }}-dr-{{ item }}-namespace
+        --identity-name {{ aks_mi.name }}
+        --resource-group {{ aks_mi.rg }}
+        --issuer {{ oidc_issuer_url }}
+        --subject system:serviceaccount:{{ item }}:aks-managed-identity-sa
+        --audience api://AzureADTokenExchange
+      with_items: "{{ namespaces }}"
+      register: azure_mi_aks_federated_credentials
+      when: stack_name == "infra" and "-dr" in subscription_code
+      tags:
+        - configure
+        - workloadidentity
+
+    # --> Install Application Gateway Ingress Controller using Helm
+    # Reference: https://azure.github.io/application-gateway-kubernetes-ingress/
+    # Authentication: User Assigned Managed Identity
+    - name: Retrieve Managed Identity info for AppGW
+      shell: >
+        az identity show
+        --name "{{ agw_mi.name }}"
+        --resource-group {{ agw_mi.rg }}
+        --subscription {{ subscription_id }}
+        --query [id,clientId] -o tsv
+      no_log: true
+      when: agic.auth_type == "workloadIdentity"
+      register: get_identity_agw
+      tags:
+        - configure
+        - template
+        - appgw
+
+    - name: Set Identity facts for AGIC Auth
+      set_fact:
+        agic_auth_resource_id: "{{ get_identity_agw.stdout_lines[0] }}"
+        agic_auth_client_id: "{{ get_identity_agw.stdout_lines[1] }}"
+      no_log: true
+      when: agic.auth_type == "workloadIdentity"
+      tags:
+        - configure
+        - template
+        - appgw
+
+    - name: Create Federated Credentials for AppGW Service Account
+      shell: >
+        az identity federated-credential create
+        --name federated-credential-{{ agw_mi.name }}-ingress-azure-namespace
+        --identity-name {{ agw_mi.name }}
+        --resource-group {{ agw_mi.rg }}
+        --issuer {{ oidc_issuer_url }}
+        --subject system:serviceaccount:ingress-azure:ingress-azure
+        --audience api://AzureADTokenExchange
+      register: azure_mi_agw_federated_credentials
+      when: stack_name == "infra" and "-dr" not in subscription_code
+      tags:
+        - configure
+        - appgw
+
+    - name: Create Federated Credentials for AppGW Service Account
+      shell: >
+        az identity federated-credential create
+        --name federated-credential-{{ agw_mi.name }}-dr-ingress-azure-namespace
+        --identity-name {{ agw_mi.name }}
+        --resource-group {{ agw_mi.rg }}
+        --issuer {{ oidc_issuer_url }}
+        --subject system:serviceaccount:ingress-azure:ingress-azure
+        --audience api://AzureADTokenExchange
+      register: azure_mi_agw_federated_credentials
+      when: stack_name == "infra" and "-dr" in subscription_code
+      tags:
+        - configure
+        - appgw
+
+    - name: Create custom values from template for AGIC Chart
+      template:
+        src: "k8s_templates/ingress-azure/values.yaml.j2"
+        dest: "{{ working_dir }}/k8s/ingress-azure-values.yaml"
+      register: helm_agic_template
+      tags:
+        - configure
+        - template
+        - appgw
+
+    - name: Install AGIC Helm Chart
+      shell: >
+        kubectl create namespace {{ agic.namespace }} --dry-run=client -o yaml | kubectl apply -f -;
+        helm upgrade --install
+        ingress-azure
+        -n {{ agic.namespace }}
+        -f "{{ working_dir }}/k8s/ingress-azure-values.yaml"
+        application-gateway-kubernetes-ingress/ingress-azure
+        --version {{ agic.chart_version }}
+      register: helm_install_agic
+      tags:
+        - configure
+        - appgw
+
+    # --> Install Secrets Store CSI Driver and Azure Key Vault Provider using Helms
+    # Reference: https://azure.github.io/secrets-store-csi-driver-provider-azure/docs/getting-started/installation/
+    - name: Create custom values from template for CSI Secret Driver Chart
+      template:
+        src: "k8s_templates/csi-secrets-store-provider-azure/values.yaml.j2"
+        dest: "{{ working_dir }}/k8s/csi-secrets-store-provider-azure-values.yaml"
+      register: helm_csi_secrets_azure_template
+      tags:
+        - configure
+        - template
+        - csi
+
+    - name: Install CSI Secrets Driver Helm Chart
+      shell: >
+        kubectl create namespace {{ csi_secrets_azure.namespace }} --dry-run=client -o yaml | kubectl apply -f -;
+        helm upgrade --install
+        csi-secrets-store-provider-azure
+        -n {{ csi_secrets_azure.namespace }}
+        -f "{{ working_dir }}/k8s/csi-secrets-store-provider-azure-values.yaml"
+        csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
+        --version {{ csi_secrets_azure.chart_version }}
+      register: helm_install_csi_secrets_azure
+      tags:
+        - configure
+        - csi
+
+    # --> Install KEDA using Helms
+    # Reference: https://keda.sh/docs/2.8/deploy/#helm
+    - name: Create custom values from template for KEDA Chart
+      template:
+        src: "k8s_templates/keda/values.yaml.j2"
+        dest: "{{ working_dir }}/k8s/keda-values.yaml"
+      register: helm_keda_template
+      tags:
+        - configure
+        - template
+        - keda
+
+    - name: Install KEDA (Kubernetes Event-driven Autoscaling) Helm Chart
+      shell: >
+        kubectl create namespace {{ keda.namespace }} --dry-run=client -o yaml | kubectl apply -f -;
+        helm upgrade --install
+        keda
+        -n {{ keda.namespace }}
+        -f "{{ working_dir }}/k8s/keda-values.yaml"
+        kedacore/keda
+        --version {{ keda.chart_version }}
+      register: helm_install_keda
+      tags:
+        - configure
+        - keda
+
+    - name: Get Azure fileshare name from Key Vault
+      shell: >
+        az keyvault secret show
+        --name "{{ fileshare_secrets.storage_account_name }}"
+        --vault-name {{ kv.name }}
+        --query value -o tsv
+      no_log: true
+      register: "kv_fileshare_name"
+      tags:
+        - template
+        - configure
+
+    - name: Get Azure fileshare Access key from Key Vault
+      shell: >
+        az keyvault secret show
+        --name "{{ fileshare_secrets.access_key1}}"
+        --vault-name {{ kv.name }}
+        --query value -o tsv
+      no_log: true
+      register: "kv_fileshare_key"
+      tags:
+        - template
+        - configure
+
+    - name: "Create/update azure-fileshare-credentials secret"
+      shell: >
+        kubectl create secret generic
+        azure-fileshare-credentials
+        --from-literal=azurestorageaccountname='{{ kv_fileshare_name.stdout }}'
+        --from-literal=azurestorageaccountkey='{{ kv_fileshare_key.stdout }}'
+        --namespace={{ item }}
+        --dry-run=client -o yaml | kubectl apply -f -
+      with_items: "{{ namespaces }}"
+      no_log: true
+      tags:
+        - configure
+
+    - name: "Create storageclass with retain policy"
+      shell: >
+        kubectl apply -f "k8s_templates/storage-class-retain.yaml"
+      no_log: true
+      tags:
+        - configure
+        - tableau
+
+    - name: Create Tableau Persistent Disk from template
+      template:
+        src: "k8s_templates/tableau-data-pv.yaml.j2"
+        dest: "{{ working_dir }}/k8s/tableau-data-pv.yaml"
+      register: tableau_pv_template
+      tags:
+        - configure
+        - template
+        - tableau
+
+    - name: Create Tableau Persistent Disk from template
+      shell: >
+        kubectl apply -f "{{ working_dir }}/k8s/tableau-data-pv.yaml"
+      tags:
+        - configure
+        - tableau
+
+    - name: Create appinsights-k8s-property-reader ClusterRole and ClusterRoleBinding definition from template
+      template:
+        src: "k8s_templates/appinsights-k8s-property-reader.yaml.j2"
+        dest: "{{ working_dir }}/k8s/appinsights-k8s-property-reader.yaml"
+      register: kubernetes_clusterrole_template
+      tags:
+        - template
+        - appinsights
+
+    - name: Create appinsights-k8s-property-reader ClusterRole and ClusterRoleBinding
+      shell: >
+        kubectl apply -f "{{ working_dir }}/k8s/appinsights-k8s-property-reader.yaml"
+      register: kubectl_clusterrolebinding
+      tags:
+        - appinsights
+
+#### TO DO ####
+# 1. Use terraform output tf_output_items to set fact dynamically, or hard-code var name if var name cannot be dynamic
+# 2. Install helm diff plugin and do helm diff on upgrade
+# helm diff upgrade aad-pod-identity aad-pod-identity/aad-pod-identity -n aad-pod-identity -f aad-pod-identity-values.yaml --version 4.1.9
+
+# Run as below:
+# ansible-playbook -v playbook.yml --extra-vars "app_env=test app_version=1.0.76-release namespace=test acr_name=originsacrtestaustraliaeast" --tags testing
+# ansible-playbook -v playbook.yml --extra-vars "app_env=dev app_version=1.0.486-dev namespace=demo acr_name=originscrdevaustraliaeast" --tags testing
+    - name: Create yaml files from templates for testing purpose
+      template:
+        src: "{{ item }}"
+        dest: '{{ working_dir }}/{{ item | basename | regex_replace("\.j2","") }}'
+      # fileglob lookup : Patterns/wildcard are only supported on files, not directory/paths.
+      with_fileglob:
+        - "k8s_templates/testing-csidriver/*.yaml.j2"
+      register: testing_csidriver
+      tags:
+        - testing

@@ -10,10 +10,13 @@ stack_name: infra
 prefix: sample
 location: aue
 azure_location: australiaeast
+primary_location: australiaeast
+geo_redundant_location: australiasoutheast
 user: "{{ lookup('env','HOME') }}"
 working_dir: "{{ user }}/temp/deployments-{{ timestamp }}/{{ prefix }}-{{ stack_name }}-{{ subscription_code }}-{{ azure_location }}"
 
-# Subscriptions
+# Default Tenant and Subscriptions
+tenant_id: "c30896b5-68b6-4ac8-b1ce-c8c193c2077c"
 subscription:
   prod: # Production environment
     code: prod
@@ -33,24 +36,38 @@ subscription:
 #----------------------#
 ### Resource Groups
 rg:
-  shared: "{{ prefix }}-rg-shared-{{ azure_location }}" # Shared across all subscriptions
+  shared: "{{ prefix }}-rg-shared-{{ primary_location }}" # Shared across all subscriptions
   name:
+    # Inside each subscription
     common: "{{ prefix }}-rg-common-{{ subscription_code }}-{{ azure_location }}" # Common for all environments
     network: "{{ prefix }}-rg-network-{{ subscription_code }}-{{ azure_location }}" # Networking segments
-    aks: "{{ prefix }}-rg-aks-{{ subscription_code }}-{{ azure_location }}" # AKS related
-    persist: "{{ prefix }}-rg-persist-{{ subscription_code }}-{{ azure_location }}" # Resources need to be retained
+    aks: "{{ prefix }}-rg-aks-{{ subscription_code }}-{{ azure_location }}" # AKS related, AppGW and User Assigned Identities
+    persist: "{{ prefix }}-rg-persist-{{ subscription_code }}-{{ azure_location }}" # Resources need to be retained, Key Vault, Storage
   tags:
     ServiceType: "Azure Resource Group"
 
-### Key Vault (3-24 characters)
+### Key Vault (global, 3-24 characters)
 kv:
-  name:
-    aks: "{{ prefix }}-kv-aks-{{ subscription_code }}-{{ location }}" # certificates and secrets for AKS cluster and applications
-    platform: "{{ prefix }}-kv-infra-{{ subscription_code }}-{{ location }}" # certificates and secrets for other resources
-
-
+  name: "{{ prefix }}-kv-{{ subscription_code }}-{{ location }}"
+  sku: standard
+  diagnostic_setting_enabled: true
+  tags:
+    ApplicationName: "Azure Key Vault"
+    SecurityClassification: "Medium"
 ### Other common properties:
 devops_vmss_subnet_id: "/subscriptions/{{ subscription.dev.id }}/resourceGroups/AUSAZ-RG-DEV-DEVOPS-VMSS/providers/Microsoft.Network/virtualNetworks/AUSAZ-RG-DEV-DEVOPS-VMSS-vnet/subnets/default"
+
+### xxx_dr.yml file contains variation because the same components are used for both Primary and Secondary(DR) environment
+aks_mi:
+  name: "{{ prefix }}-mi-aks-{{ subscription_code }}-{{ primary_location }}"
+  rg: "{{ prefix }}-rg-aks-{{ subscription_code }}-{{ primary_location }}"
+agw_mi:
+  name: "{{ prefix }}-mi-agw-{{ subscription_code }}-{{ primary_location }}"
+  rg: "{{ prefix }}-rg-aks-{{ subscription_code }}-{{ primary_location }}"
+fileshare_secrets:
+  storage_account_name: "{{ prefix }}strgfile{{ subscription_code }}-storage-account-name"
+  access_key1: "{{ prefix }}strgfile{{ subscription_code }}-storage-account-access-key1"
+aks_node_rg_name: MC_{{ rg.name.aks }}_{{ aks.name }}_{{ azure_location }}
 
 ### Terraform backend configuration
 backend:
@@ -60,13 +77,61 @@ backend:
 
 # Terraform
 tf_ignore_changes_list:
+  agw:
+    - backend_address_pool
+    - backend_http_settings
+    - frontend_port
+    - http_listener
+    - probe
+    - request_routing_rule
+    - redirect_configuration
+    - ssl_certificate
+    - url_path_map
+    - tags
+  func:
+    - app_settings
+    - service_plan_id
+    - storage_key_vault_secret_id
+    - storage_account_access_key
+    - storage_account_name
+    - sticky_settings
+    - functions_extension_version
+    - tags
+  rsv:
+    - retention_monthly
+  aks:
+    - oms_agent
+    - microsoft_defender
+  budget:
+    - time_period
+    - notification
+
+# Email Notification
+action_groups:
+  emails:
+    devops:
+      - name: DevOps_Distribution_List_EmailAction
+        address: info@cloudandaisolutions.com.au
+    infra:
+      - name: Sandy-Email_EmailAction
+        address: sandywp1982@gmail.com
+  mobiles:
+    - name: Sandy_SMSAction
+      phone_number: "452024076"
 
 #-------------#
 # Common Tags #
 #-------------#
-tags:
+resource_tags:
+  businessUnit: "Cloud and AI Solutions"
+  dataClassification: "{{ data_classification }}"
   application: "Sample"
   costCentre: "INNOVATION"
   location: "{{ azure_location }}"
   environment: "{{ subscription_code|upper }}"
 
+force_destroy: "false"
+maintenance_window: "no"
+deploy_on_demand: "yes"
+disk_geo_restore: "no"
+date: "{{ lookup('pipe','date +%Y-%m-%d') }}"
